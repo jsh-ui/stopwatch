@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>달팽이 스탑워치</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #3b4a3a;
+    --muted: #7d8a7b;
+    --card: rgba(255, 255, 255, 0.72);
+    --line: rgba(59, 74, 58, 0.12);
+    --start: #5bb974;
+    --stop: #f07a7a;
+    --neutral: rgba(255, 255, 255, 0.85);
+    --best: #3c9d57;
+    --worst: #e05a5a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: linear-gradient(#a9ddff, #e8f8ff 55%, #a6dc8a 55%);
+    color: var(--text);
+    font-family: "Jua", system-ui, "Malgun Gothic", sans-serif;
+    overflow: hidden;
+  }
+  #scene {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    display: block;
+  }
+  .wrap {
+    position: relative;
+    z-index: 1;
+    width: calc(100% - 32px);
+    max-width: 420px;
+    margin: 28px auto 0;
+    padding: 20px 22px 18px;
+    background: var(--card);
+    border-radius: 28px;
+    box-shadow: 0 10px 30px rgba(60, 110, 80, 0.18);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .display {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(44px, 14vw, 68px);
+    text-align: center;
+    letter-spacing: 1px;
+    margin: 4px 0 18px;
+  }
+  .display .ms { color: var(--muted); }
+  .buttons { display: flex; gap: 14px; }
+  button {
+    flex: 1;
+    height: 56px;
+    border: none;
+    border-radius: 28px;
+    font: inherit;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text);
+    background: var(--neutral);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.08);
+    transition: filter .15s, transform .05s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.06); }
+  button:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+  button:disabled { opacity: .5; cursor: default; }
+  #toggle.start { background: var(--start); color: #fff; }
+  #toggle.stop  { background: var(--stop);  color: #fff; }
+  .hint { text-align: center; color: var(--muted); font-size: 13px; margin: 12px 0 8px; }
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 22vh;
+    overflow-y: auto;
+  }
+  li {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 4px;
+    border-top: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  li .total { color: var(--muted); font-size: 14px; margin-left: auto; margin-right: 16px; }
+  li.best  { color: var(--best); }
+  li.worst { color: var(--worst); }
+  #banner {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translate(-50%, 20px);
+    z-index: 2;
+    padding: 10px 22px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 6px 20px rgba(60, 110, 80, 0.2);
+    font-size: 22px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity .3s, transform .3s;
+    pointer-events: none;
+  }
+  #banner.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div class="wrap">
+  <div class="display" id="display">00:00<span class="ms">.00</span></div>
+  <div class="buttons">
+    <button id="lap" disabled>기다려</button>
+    <button id="toggle" class="start">출발</button>
+  </div>
+  <div class="hint">Space: 출발/정지 · L: 기다려 · R: 리셋</div>
+  <ul id="laps"></ul>
+</div>
+<div id="banner"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ───────────── 3D 배경: 달팽이 경주 ───────────── */
+(() => {
+  if (!window.THREE) return; // 오프라인이면 CSS 배경만 표시
+
+  const canvas = document.getElementById('scene');
+  const banner = document.getElementById('banner');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#bfe6ff');
+  scene.fog = new THREE.Fog('#bfe6ff', 110, 320);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 600);
+
+  // 조명
+  scene.add(new THREE.HemisphereLight('#ffffff', '#6aa84f', 0.5));
+  const sun = new THREE.DirectionalLight('#fff6e0', 0.65);
+  sun.position.set(12, 30, 18);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 24, bottom: -24, near: 1, far: 90 });
+  scene.add(sun);
+
+  const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, ...opts });
+  const shadowed = m => { m.castShadow = true; m.receiveShadow = true; return m; };
+
+  /* ── 트랙 ── */
+  const LANES = 5, LANE_W = 4, TRACK_HALF = 22;
+  const START_X = -18, FINISH_X = 18;
+  const laneZ = i => (i - (LANES - 1) / 2) * LANE_W;
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), mat('#86c866'));
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  for (let i = 0; i < LANES; i++) {
+    const lane = new THREE.Mesh(
+      new THREE.PlaneGeometry(TRACK_HALF * 2, LANE_W),
+      mat(i % 2 ? '#7cc95e' : '#8fd472')
+    );
+    lane.rotation.x = -Math.PI / 2;
+    lane.position.set(0, 0.01, laneZ(i));
+    lane.receiveShadow = true;
+    scene.add(lane);
+  }
+  const whiteMat = mat('#ffffff');
+  for (let i = 0; i <= LANES; i++) {
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(TRACK_HALF * 2, 0.12), whiteMat);
+    line.rotation.x = -Math.PI / 2;
+    line.position.set(0, 0.02, (i - LANES / 2) * LANE_W);
+    line.receiveShadow = true;
+    scene.add(line);
+  }
+  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(0.4, LANES * LANE_W), whiteMat);
+  startLine.rotation.x = -Math.PI / 2;
+  startLine.position.set(START_X - 1.6, 0.025, 0);
+  scene.add(startLine);
+
+  // 체크무늬 결승선
+  const checkerCanvas = document.createElement('canvas');
+  checkerCanvas.width = checkerCanvas.height = 16;
+  const cctx = checkerCanvas.getContext('2d');
+  cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, 16, 16);
+  cctx.fillStyle = '#333'; cctx.fillRect(0, 0, 8, 8); cctx.fillRect(8, 8, 8, 8);
+  const checker = (rx, ry) => {
+    const t = new THREE.CanvasTexture(checkerCanvas);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.NearestFilter;
+    t.repeat.set(rx, ry);
+    return t;
+  };
+  const finish = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.25, LANES * LANE_W),
+    new THREE.MeshStandardMaterial({ map: checker(1, 16), roughness: 0.8 })
+  );
+  finish.rotation.x = -Math.PI / 2;
+  finish.position.set(FINISH_X + 2.4, 0.025, 0);
+  finish.receiveShadow = true;
+  scene.add(finish);
+
+  // 결승 아치
+  const poleMat = mat('#ffffff');
+  [-1, 1].forEach(s => {
+    const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 6.5, 16), poleMat));
+    pole.position.set(FINISH_X + 2.4, 3.25, s * (LANES * LANE_W / 2 + 0.6));
+    scene.add(pole);
+  });
+  const archBanner = shadowed(new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 1.4, LANES * LANE_W + 1.2),
+    new THREE.MeshStandardMaterial({ map: checker(16, 1.4), roughness: 0.8 })
+  ));
+  archBanner.position.set(FINISH_X + 2.4, 6.2, 0);
+  scene.add(archBanner);
+
+  /* ── 풍경 ── */
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // 뒤쪽 언덕
+  [[-70, -110, 45, '#b6e59a'], [10, -130, 60, '#a9dd8b'], [90, -115, 50, '#bfe9a6']].forEach(([x, z, r, c]) => {
+    const hill = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 16), mat(c));
+    hill.scale.y = 0.45;
+    hill.position.set(x, -r * 0.1, z);
+    scene.add(hill);
+  });
+
+  // 둥근 나무
+  const trunkMat = mat('#b07a4f');
+  const leafMats = ['#6cc46a', '#7fd27a', '#5fb560'].map(c => mat(c));
+  for (let i = 0; i < 16; i++) {
+    const tree = new THREE.Group();
+    const h = rand(2, 3.5);
+    const trunk = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, h, 10), trunkMat));
+    trunk.position.y = h / 2;
+    tree.add(trunk);
+    const leafMat = leafMats[i % 3];
+    [[0, h + 1.4, 0, 2], [0.9, h + 0.8, 0.3, 1.4], [-0.9, h + 0.9, -0.2, 1.5]].forEach(([x, y, z, r]) => {
+      const leaf = shadowed(new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), leafMat));
+      leaf.position.set(x, y, z);
+      tree.add(leaf);
+    });
+    tree.position.set(-44 + i * 6 + rand(-2, 2), 0, rand(-26, -16));
+    tree.scale.setScalar(rand(0.8, 1.2));
+    scene.add(tree);
+  }
+
+  // 버섯
+  const capMat = mat('#ff6f6f', { roughness: 0.5 });
+  const stemMat = mat('#fff4e6');
+  for (let i = 0; i < 7; i++) {
+    const m = new THREE.Group();
+    const stem = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.32, 0.8, 12), stemMat));
+    stem.position.y = 0.4;
+    const cap = shadowed(new THREE.Mesh(new THREE.SphereGeometry(0.7, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), capMat));
+    cap.position.y = 0.75;
+    m.add(stem, cap);
+    for (let d = 0; d < 5; d++) {
+      const a = (d / 5) * Math.PI * 2;
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), whiteMat);
+      dot.position.set(Math.cos(a) * 0.45, 1.2, Math.sin(a) * 0.45);
+      m.add(dot);
+    }
+    m.position.set(rand(-28, 28), 0, rand(12.5, 17) * (i % 2 ? 1 : -1));
+    m.scale.setScalar(rand(0.8, 1.4));
+    scene.add(m);
+  }
+
+  // 꽃
+  const petalColors = ['#ffffff', '#ffd1dc', '#fff3a8', '#e1d0ff'].map(c => mat(c));
+  const centerMat = mat('#ffb347');
+  const stemGreen = mat('#4fa34f');
+  for (let i = 0; i < 60; i++) {
+    const f = new THREE.Group();
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.6, 6), stemGreen);
+    stem.position.y = 0.3;
+    f.add(stem);
+    const pm = petalColors[i % petalColors.length];
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2;
+      const petal = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), pm);
+      petal.position.set(Math.cos(a) * 0.2, 0.62, Math.sin(a) * 0.2);
+      f.add(petal);
+    }
+    const c = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), centerMat);
+    c.position.y = 0.64;
+    f.add(c);
+    const side = i % 2 ? 1 : -1;
+    f.position.set(rand(-40, 40), 0, side * rand(10.8, 22));
+    scene.add(f);
+  }
+
+  // 구름
+  const cloudMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1 });
+  const clouds = [];
+  for (let i = 0; i < 7; i++) {
+    const c = new THREE.Group();
+    [[0, 0, 0, 3], [3, 0.8, 0, 3.6], [6.2, 0, 0, 2.8], [3, -0.6, 1.5, 2.6]].forEach(([x, y, z, r]) => {
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), cloudMat);
+      puff.position.set(x, y, z);
+      c.add(puff);
+    });
+    c.position.set(rand(-120, 120), rand(26, 42), rand(-90, -50));
+    c.userData.v = rand(1.2, 3);
+    clouds.push(c);
+    scene.add(c);
+  }
+
+  /* ── 달팽이 ── */
+  const SNAILS = [
+    { name: '핑크',  shell: '#ff9eb5', line: '#d9607f' },
+    { name: '주황',  shell: '#ffc76b', line: '#d98e26' },
+    { name: '파랑',  shell: '#8fcbff', line: '#4a8fd1' },
+    { name: '보라',  shell: '#c6a8ff', line: '#8a63d8' },
+    { name: '초록',  shell: '#94e0aa', line: '#4aa86a' },
+  ];
+  const bodyMat = mat('#ffe0b0', { roughness: 0.55 });
+  const eyeWhite = mat('#ffffff', { roughness: 0.3 });
+  const pupilMat = mat('#222222', { roughness: 0.3 });
+  const cheekMat = mat('#ff9aac');
+  const smileMat = mat('#9a5a2e');
+  const trailMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.5 });
+
+  function makeShell(color, lineColor) {
+    const g = new THREE.Group();
+    const R = 1.15, ZS = 0.78;
+    const shell = shadowed(new THREE.Mesh(
+      new THREE.SphereGeometry(R, 32, 24),
+      mat(color, { roughness: 0.35 })
+    ));
+    shell.scale.z = ZS;
+    g.add(shell);
+    const lineMat = mat(lineColor, { roughness: 0.4 });
+    [1, -1].forEach(side => {
+      const pts = [];
+      for (let a = 0; a < Math.PI * 4.2; a += 0.12) {
+        const r = R * 0.92 * (1 - a / (Math.PI * 4.6));
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        const z = side * (ZS * Math.sqrt(Math.max(0, R * R - r * r)) + 0.02);
+        pts.push(new THREE.Vector3(x, y, z));
+      }
+      const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 120, 0.06, 6, false),
+        lineMat
+      );
+      g.add(tube);
+    });
+    return g;
+  }
+
+  function makeSnail(info, lane) {
+    const root = new THREE.Group();
+    const body = shadowed(new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), bodyMat));
+    body.scale.set(1.9, 0.42, 0.62);
+    body.position.set(0, 0.42, 0);
+    root.add(body);
+
+    const head = new THREE.Group();
+    head.position.set(1.6, 0.95, 0);
+    const headBall = shadowed(new THREE.Mesh(new THREE.SphereGeometry(0.58, 20, 16), bodyMat));
+    head.add(headBall);
+
+    const stalks = [];
+    [1, -1].forEach(side => {
+      const st = new THREE.Group();
+      st.position.set(0.05, 0.35, side * 0.22);
+      st.rotation.set(side * 0.28, 0, -0.3);
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1, 8), bodyMat);
+      stick.position.y = 0.5;
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12), eyeWhite);
+      eye.position.y = 1.05;
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), pupilMat);
+      pupil.position.set(0.15, 1.07, side * 0.1);
+      st.add(stick, eye, pupil);
+      head.add(st);
+      stalks.push(st);
+    });
+    [1, -1].forEach(side => {
+      const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), cheekMat);
+      cheek.scale.z = 0.4;
+      cheek.position.set(0.25, -0.1, side * 0.5);
+      head.add(cheek);
+      const smile = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.03, 6, 16, Math.PI), smileMat);
+      smile.rotation.set(0, side > 0 ? 0 : Math.PI, Math.PI);
+      smile.position.set(0.38, -0.05, side * 0.42);
+      head.add(smile);
+    });
+    root.add(head);
+
+    const shell = makeShell(info.shell, info.line);
+    shell.position.set(-0.35, 1.5, 0);
+    shell.rotation.z = 0.15;
+    root.add(shell);
+
+    const crown = new THREE.Group();
+    const gold = mat('#ffd34d', { roughness: 0.3, metalness: 0.3 });
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.4, 20, 1, true), gold);
+    band.material.side = THREE.DoubleSide;
+    crown.add(band);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.4, 8), gold);
+      spike.position.set(Math.cos(a) * 0.5, 0.38, Math.sin(a) * 0.5);
+      crown.add(spike);
+    }
+    crown.position.set(-0.35, 3.1, 0);
+    crown.visible = false;
+    root.add(crown);
+
+    const trail = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.7), trailMat);
+    trail.rotation.x = -Math.PI / 2;
+    trail.position.set(0, 0.03, laneZ(lane));
+    trail.visible = false;
+    scene.add(trail);
+
+    root.position.z = laneZ(lane);
+    scene.add(root);
+    return { info, lane, root, body, head, shell, stalks, crown, trail,
+             p: 0, phase: 0, base: 0, boost: 1, nextChange: 0 };
+  }
+
+  const snails = SNAILS.map(makeSnail);
+
+  /* ── 색종이 ── */
+  const confettiColors = ['#ff9eb5', '#ffc76b', '#8fcbff', '#c6a8ff', '#94e0aa', '#fff3a8'];
+  const confetti = Array.from({ length: 90 }, (_, i) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.28, 0.45),
+      new THREE.MeshBasicMaterial({ color: confettiColors[i % confettiColors.length], side: THREE.DoubleSide })
+    );
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+
+  function burstConfetti(x, z) {
+    confetti.forEach(m => {
+      m.visible = true;
+      m.position.set(x + rand(-3, 3), rand(5, 10), z + rand(-3, 3));
+      m.userData = { vx: rand(-1.5, 1.5), vy: rand(-1, 2), vz: rand(-1.5, 1.5), rx: rand(-6, 6), ry: rand(-6, 6) };
+    });
+  }
+
+  /* ── 경주 로직 ── */
+  let winner = null, winTime = 0, time = 0;
+
+  function newRace() {
+    winner = null;
+    banner.classList.remove('show');
+    confetti.forEach(m => (m.visible = false));
+    snails.forEach(s => {
+      s.p = 0;
+      s.phase = Math.random() * Math.PI * 2;
+      s.base = 1 / (14 + Math.random() * 8);   // 한 판에 약 14~22초
+      s.boost = 1;
+      s.nextChange = Math.random() * 2;
+      s.crown.visible = false;
+      s.root.position.y = 0;
+      s.root.rotation.y = 0;
+    });
+  }
+
+  function update(dt) {
+    clouds.forEach(c => {
+      c.position.x += c.userData.v * dt;
+      if (c.position.x > 140) c.position.x = -140;
+    });
+
+    if (winner) {
+      if (time - winTime > 4) newRace();
+    } else {
+      snails.forEach(s => {
+        s.nextChange -= dt;
+        if (s.nextChange <= 0) {
+          s.boost = 0.6 + Math.random() * 0.9;   // 가끔 힘내거나 쉬어가기
+          s.nextChange = 1 + Math.random() * 2;
+        }
+        s.phase += dt * 4 * s.boost;
+        const pulse = 0.4 + 0.6 * Math.max(0, Math.sin(s.phase));
+        s.p += s.base * s.boost * pulse * 1.4 * dt;
+        if (s.p >= 1 && !winner) {
+          s.p = 1;
+          winner = s;
+          winTime = time;
+          s.crown.visible = true;
+          banner.textContent = `🏆 ${s.info.name} 달팽이 우승!`;
+          banner.classList.add('show');
+          burstConfetti(FINISH_X, laneZ(s.lane));
+        }
+      });
+    }
+
+    // 달팽이 모양 갱신
+    snails.forEach(s => {
+      const x = START_X + s.p * (FINISH_X - START_X);
+      const stretch = (Math.sin(s.phase) + 1) / 2;
+      s.root.position.x = x;
+      s.body.scale.x = 1.8 + stretch * 0.25;
+      s.body.position.x = stretch * 0.15;
+      s.head.position.x = 1.6 + stretch * 0.4;
+      s.shell.position.y = 1.5 + Math.sin(s.phase) * 0.06;
+      s.stalks.forEach((st, i) => {
+        st.rotation.z = -0.3 + Math.sin(time * 3 + i * 1.7 + s.lane) * 0.12;
+      });
+      const len = x - 1.6 - (START_X - 1.6);
+      s.trail.visible = len > 0.05;
+      s.trail.scale.x = Math.max(0.01, len);
+      s.trail.position.x = START_X - 1.6 + len / 2;
+
+      if (s === winner) {
+        const hop = Math.abs(Math.sin((time - winTime) * 5));
+        s.root.position.y = hop * 0.8;
+        s.crown.position.y = 3.1 + hop * 0.4;
+        s.crown.rotation.y += dt * 2;
+      }
+    });
+
+    confetti.forEach(m => {
+      if (!m.visible) return;
+      const u = m.userData;
+      u.vy -= 4 * dt;
+      u.vy = Math.max(u.vy, -2.5);
+      m.position.x += u.vx * dt;
+      m.position.y += u.vy * dt;
+      m.position.z += u.vz * dt;
+      m.rotation.x += u.rx * dt;
+      m.rotation.y += u.ry * dt;
+      if (m.position.y < 0.05) { m.position.y = 0.05; u.vx = u.vz = u.rx = u.ry = 0; }
+    });
+  }
+
+  /* ── 카메라 ── */
+  let camDist = 40;
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+    camDist = Math.max(26, 22 / (Math.tan(halfFov) * camera.aspect));
+    camera.updateProjectionMatrix();
+  }
+
+  function placeCamera() {
+    const sway = Math.sin(time * 0.15) * 0.08;
+    const dir = new THREE.Vector3(Math.sin(sway) * 0.8, 0.42, Math.cos(sway)).normalize();
+    camera.position.copy(dir.multiplyScalar(camDist));
+    camera.lookAt(0, camDist * 0.16, 0);
+  }
+
+  const clock = new THREE.Clock();
+  function frame() {
+    const dt = Math.min(0.25, clock.getDelta());
+    time += dt;
+    update(dt);
+    placeCamera();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  newRace();
+  frame();
+})();
+
+/* ───────────── 스탑워치 ───────────── */
+(() => {
+  const display = document.getElementById('display');
+  const toggleBtn = document.getElementById('toggle');
+  const lapBtn = document.getElementById('lap');
+  const lapList = document.getElementById('laps');
+
+  let running = false;
+  let startTime = 0;
+  let elapsed = 0;
+  let laps = [];
+  let lastLapTotal = 0;
+  let rafId = null;
+
+  const now = () => running ? elapsed + (performance.now() - startTime) : elapsed;
+
+  function format(ms) {
+    const cs = Math.floor(ms / 10) % 100;
+    const s = Math.floor(ms / 1000) % 60;
+    const m = Math.floor(ms / 60000) % 60;
+    const h = Math.floor(ms / 3600000);
+    const p = n => String(n).padStart(2, '0');
+    return { main: (h ? h + ':' : '') + p(m) + ':' + p(s), ms: '.' + p(cs) };
+  }
+
+  function render() {
+    const t = format(now());
+    display.innerHTML = t.main + '<span class="ms">' + t.ms + '</span>';
+    if (running) rafId = requestAnimationFrame(render);
+  }
+
+  function renderLaps() {
+    lapList.innerHTML = '';
+    const min = laps.length > 1 ? Math.min(...laps) : null;
+    const max = laps.length > 1 ? Math.max(...laps) : null;
+    let total = 0;
+    const rows = laps.map((d, i) => {
+      total += d;
+      const li = document.createElement('li');
+      if (d === min) li.className = 'best';
+      else if (d === max) li.className = 'worst';
+      const t = format(d), tt = format(total);
+      li.innerHTML = '<span>기다려 ' + (i + 1) + '</span>' +
+        '<span class="total">' + tt.main + tt.ms + '</span>' +
+        '<span>' + t.main + t.ms + '</span>';
+      return li;
+    });
+    rows.reverse().forEach(li => lapList.appendChild(li));
+  }
+
+  function updateButtons() {
+    toggleBtn.textContent = running ? '정지' : '출발';
+    toggleBtn.className = running ? 'stop' : 'start';
+    lapBtn.textContent = running || elapsed === 0 ? '기다려' : '리셋';
+    lapBtn.disabled = !running && elapsed === 0;
+  }
+
+  function toggle() {
+    if (running) {
+      elapsed = now();
+      running = false;
+      cancelAnimationFrame(rafId);
+      render();
+    } else {
+      startTime = performance.now();
+      running = true;
+      render();
+    }
+    updateButtons();
+  }
+
+  function lap() {
+    if (!running) return;
+    const t = now();
+    laps.push(t - lastLapTotal);
+    lastLapTotal = t;
+    renderLaps();
+  }
+
+  function reset() {
+    if (running) return;
+    elapsed = 0; laps = []; lastLapTotal = 0;
+    render(); renderLaps(); updateButtons();
+  }
+
+  toggleBtn.addEventListener('click', toggle);
+  lapBtn.addEventListener('click', () => running ? lap() : reset());
+
+  document.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (e.key === 'l' || e.key === 'L') lap();
+    else if (e.key === 'r' || e.key === 'R') reset();
+  });
+})();
+</script>
+</body>
+</html>
