@@ -92,23 +92,6 @@
   li .total { color: var(--muted); font-size: 14px; margin-left: auto; margin-right: 16px; }
   li.best  { color: var(--best); }
   li.worst { color: var(--worst); }
-  #banner {
-    position: fixed;
-    left: 50%;
-    bottom: 24px;
-    transform: translate(-50%, 20px);
-    z-index: 2;
-    padding: 10px 22px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 6px 20px rgba(60, 110, 80, 0.2);
-    font-size: 22px;
-    white-space: nowrap;
-    opacity: 0;
-    transition: opacity .3s, transform .3s;
-    pointer-events: none;
-  }
-  #banner.show { opacity: 1; transform: translate(-50%, 0); }
 </style>
 </head>
 <body>
@@ -123,7 +106,6 @@
   <div class="hint">Space: 출발/정지 · L: 기다려 · R: 리셋</div>
   <ul id="laps"></ul>
 </div>
-<div id="banner"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -132,7 +114,6 @@
   if (!window.THREE) return; // 오프라인이면 CSS 배경만 표시
 
   const canvas = document.getElementById('scene');
-  const banner = document.getElementById('banner');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
@@ -157,8 +138,8 @@
   const shadowed = m => { m.castShadow = true; m.receiveShadow = true; return m; };
 
   /* ── 트랙 ── */
-  const LANES = 5, LANE_W = 4, TRACK_HALF = 22;
-  const START_X = -18, FINISH_X = 18;
+  const LANES = 5, LANE_W = 4, TRACK_HALF = 80;
+  const RUN_MIN = -27, RUN_MAX = 27;   // 화면 밖에서 나가고 들어오며 끝없이 달림
   const laneZ = i => (i - (LANES - 1) / 2) * LANE_W;
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), mat('#86c866'));
@@ -184,47 +165,6 @@
     line.receiveShadow = true;
     scene.add(line);
   }
-  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(0.4, LANES * LANE_W), whiteMat);
-  startLine.rotation.x = -Math.PI / 2;
-  startLine.position.set(START_X - 1.6, 0.025, 0);
-  scene.add(startLine);
-
-  // 체크무늬 결승선
-  const checkerCanvas = document.createElement('canvas');
-  checkerCanvas.width = checkerCanvas.height = 16;
-  const cctx = checkerCanvas.getContext('2d');
-  cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, 16, 16);
-  cctx.fillStyle = '#333'; cctx.fillRect(0, 0, 8, 8); cctx.fillRect(8, 8, 8, 8);
-  const checker = (rx, ry) => {
-    const t = new THREE.CanvasTexture(checkerCanvas);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.magFilter = THREE.NearestFilter;
-    t.repeat.set(rx, ry);
-    return t;
-  };
-  const finish = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.25, LANES * LANE_W),
-    new THREE.MeshStandardMaterial({ map: checker(1, 16), roughness: 0.8 })
-  );
-  finish.rotation.x = -Math.PI / 2;
-  finish.position.set(FINISH_X + 2.4, 0.025, 0);
-  finish.receiveShadow = true;
-  scene.add(finish);
-
-  // 결승 아치
-  const poleMat = mat('#ffffff');
-  [-1, 1].forEach(s => {
-    const pole = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 6.5, 16), poleMat));
-    pole.position.set(FINISH_X + 2.4, 3.25, s * (LANES * LANE_W / 2 + 0.6));
-    scene.add(pole);
-  });
-  const archBanner = shadowed(new THREE.Mesh(
-    new THREE.BoxGeometry(0.4, 1.4, LANES * LANE_W + 1.2),
-    new THREE.MeshStandardMaterial({ map: checker(16, 1.4), roughness: 0.8 })
-  ));
-  archBanner.position.set(FINISH_X + 2.4, 6.2, 0);
-  scene.add(archBanner);
-
   /* ── 풍경 ── */
   const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -403,20 +343,6 @@
     shell.rotation.z = 0.15;
     root.add(shell);
 
-    const crown = new THREE.Group();
-    const gold = mat('#ffd34d', { roughness: 0.3, metalness: 0.3 });
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.4, 20, 1, true), gold);
-    band.material.side = THREE.DoubleSide;
-    crown.add(band);
-    for (let k = 0; k < 6; k++) {
-      const a = (k / 6) * Math.PI * 2;
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.4, 8), gold);
-      spike.position.set(Math.cos(a) * 0.5, 0.38, Math.sin(a) * 0.5);
-      crown.add(spike);
-    }
-    crown.position.set(-0.35, 3.1, 0);
-    crown.visible = false;
-    root.add(crown);
 
     const trail = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.7), trailMat);
     trail.rotation.x = -Math.PI / 2;
@@ -437,8 +363,8 @@
 
     root.position.z = laneZ(lane);
     scene.add(root);
-    return { info, lane, root, body, head, shell, stalks, crown, trail,
-             label, labelCanvas, labelTex, freeze: 0,
+    return { info, lane, root, body, head, shell, stalks, trail,
+             label, labelCanvas, labelTex, frozen: false,
              p: 0, phase: 0, base: 0, boost: 1, nextChange: 0 };
   }
 
@@ -463,59 +389,35 @@
 
   const snails = SNAILS.map(makeSnail);
 
-  /* ── 색종이 ── */
-  const confettiColors = ['#ff9eb5', '#ffc76b', '#8fcbff', '#c6a8ff', '#94e0aa', '#fff3a8'];
-  const confetti = Array.from({ length: 90 }, (_, i) => {
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.28, 0.45),
-      new THREE.MeshBasicMaterial({ color: confettiColors[i % confettiColors.length], side: THREE.DoubleSide })
-    );
-    m.visible = false;
-    scene.add(m);
-    return m;
-  });
+  /* ── 달리기 로직 (결승선 없이 끝없이 달림) ── */
+  let time = 0;
+  const TRACK_LEN = RUN_MAX - RUN_MIN;
 
-  function burstConfetti(x, z) {
-    confetti.forEach(m => {
-      m.visible = true;
-      m.position.set(x + rand(-3, 3), rand(5, 10), z + rand(-3, 3));
-      m.userData = { vx: rand(-1.5, 1.5), vy: rand(-1, 2), vz: rand(-1.5, 1.5), rx: rand(-6, 6), ry: rand(-6, 6) };
-    });
-  }
-
-  /* ── 경주 로직 ── */
-  let winner = null, winTime = 0, time = 0;
-
-  function newRace() {
-    winner = null;
-    banner.classList.remove('show');
-    confetti.forEach(m => (m.visible = false));
+  function newRun() {
     snails.forEach(s => {
-      s.p = 0;
+      s.p = 0.15 + Math.random() * 0.15;
       s.phase = Math.random() * Math.PI * 2;
-      s.base = 1 / (14 + Math.random() * 8);   // 한 판에 약 14~22초
+      s.base = (36 / TRACK_LEN) / (14 + Math.random() * 8);
       s.boost = 1;
       s.nextChange = Math.random() * 2;
-      s.crown.visible = false;
-      s.freeze = 0;
+      s.frozen = false;
       s.label.visible = false;
-      s.root.position.y = 0;
-      s.root.rotation.y = 0;
     });
   }
 
-  // 스탑워치의 '기다려'에서 호출: 랜덤 달팽이를 잠시 멈추고 시간을 띄움
-  const FREEZE_SEC = 3;
+  // 스탑워치의 '기다려'에서 호출: 아직 달리는 달팽이 하나를 골라 멈추고 시간을 띄움
   window.snailRace = {
     freezeRandom(text) {
-      if (winner) return;
-      const free = snails.filter(s => s.freeze <= 0);
-      const pool = free.length ? free : snails;
+      const free = snails.filter(s => !s.frozen);
+      if (!free.length) return;
+      const onScreen = free.filter(s => Math.abs(s.root.position.x) < 20);
+      const pool = onScreen.length ? onScreen : free;
       const s = pool[Math.floor(Math.random() * pool.length)];
-      s.freeze = FREEZE_SEC;
+      s.frozen = true;
       setLabel(s, text);
       s.label.visible = true;
     },
+    reset() { newRun(); },
   };
 
   function update(dt) {
@@ -524,15 +426,8 @@
       if (c.position.x > 140) c.position.x = -140;
     });
 
-    if (winner) {
-      if (time - winTime > 4) newRace();
-    } else {
-      snails.forEach(s => {
-        if (s.freeze > 0) {               // 멈춘 동안은 제자리
-          s.freeze -= dt;
-          if (s.freeze <= 0) s.label.visible = false;
-          return;
-        }
+    snails.forEach(s => {
+      if (!s.frozen) {
         s.nextChange -= dt;
         if (s.nextChange <= 0) {
           s.boost = 0.6 + Math.random() * 0.9;   // 가끔 힘내거나 쉬어가기
@@ -541,21 +436,11 @@
         s.phase += dt * 4 * s.boost;
         const pulse = 0.4 + 0.6 * Math.max(0, Math.sin(s.phase));
         s.p += s.base * s.boost * pulse * 1.4 * dt;
-        if (s.p >= 1 && !winner) {
-          s.p = 1;
-          winner = s;
-          winTime = time;
-          s.crown.visible = true;
-          banner.textContent = `🏆 ${s.info.name} 달팽이 우승!`;
-          banner.classList.add('show');
-          burstConfetti(FINISH_X, laneZ(s.lane));
-        }
-      });
-    }
+        if (s.p >= 1) s.p -= 1;                  // 오른쪽 화면 밖으로 나가면 왼쪽에서 다시 등장
+      }
 
-    // 달팽이 모양 갱신
-    snails.forEach(s => {
-      const x = START_X + s.p * (FINISH_X - START_X);
+      // 달팽이 모양 갱신
+      const x = RUN_MIN + s.p * TRACK_LEN;
       const stretch = (Math.sin(s.phase) + 1) / 2;
       s.root.position.x = x;
       s.body.scale.x = 1.8 + stretch * 0.25;
@@ -565,30 +450,10 @@
       s.stalks.forEach((st, i) => {
         st.rotation.z = -0.3 + Math.sin(time * 3 + i * 1.7 + s.lane) * 0.12;
       });
-      const len = x - 1.6 - (START_X - 1.6);
+      const len = x - RUN_MIN;
       s.trail.visible = len > 0.05;
       s.trail.scale.x = Math.max(0.01, len);
-      s.trail.position.x = START_X - 1.6 + len / 2;
-
-      if (s === winner) {
-        const hop = Math.abs(Math.sin((time - winTime) * 5));
-        s.root.position.y = hop * 0.8;
-        s.crown.position.y = 3.1 + hop * 0.4;
-        s.crown.rotation.y += dt * 2;
-      }
-    });
-
-    confetti.forEach(m => {
-      if (!m.visible) return;
-      const u = m.userData;
-      u.vy -= 4 * dt;
-      u.vy = Math.max(u.vy, -2.5);
-      m.position.x += u.vx * dt;
-      m.position.y += u.vy * dt;
-      m.position.z += u.vz * dt;
-      m.rotation.x += u.rx * dt;
-      m.rotation.y += u.ry * dt;
-      if (m.position.y < 0.05) { m.position.y = 0.05; u.vx = u.vz = u.rx = u.ry = 0; }
+      s.trail.position.x = RUN_MIN - 1.6 + len / 2;
     });
   }
 
@@ -622,7 +487,7 @@
 
   window.addEventListener('resize', resize);
   resize();
-  newRace();
+  newRun();
   frame();
 })();
 
@@ -710,6 +575,7 @@
   function reset() {
     if (running) return;
     elapsed = 0; laps = []; lastLapTotal = 0;
+    if (window.snailRace) window.snailRace.reset();   // 멈춘 달팽이들 다시 출발
     render(); renderLaps(); updateButtons();
   }
 
