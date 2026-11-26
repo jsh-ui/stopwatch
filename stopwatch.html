@@ -92,6 +92,32 @@
   li .total { color: var(--muted); font-size: 14px; margin-left: auto; margin-right: 16px; }
   li.best  { color: var(--best); }
   li.worst { color: var(--worst); }
+  .tag {
+    position: fixed;
+    z-index: 3;
+    transform: translate(-50%, -100%);
+    margin-top: -8px;
+    padding: 4px 14px;
+    border: 3px solid;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.95);
+    color: var(--text);
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 3px 8px rgba(60, 110, 80, 0.25);
+  }
+  .tag::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -9px;
+    margin-left: -6px;
+    border: 6px solid transparent;
+    border-top-color: rgba(255, 255, 255, 0.95);
+    border-bottom: 0;
+  }
 </style>
 </head>
 <body>
@@ -377,41 +403,26 @@
     trail.visible = false;
     scene.add(trail);
 
-    // 머리 위 시간 라벨
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 320; labelCanvas.height = 112;
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthTest: false }));
-    label.scale.set(7, 2.45, 1);
-    label.position.set(1.9, 4.5, 0);
-    label.renderOrder = 10;
-    label.visible = false;
-    root.add(label);
+    // 머리 위 시간 말풍선 (화면 위에 겹쳐 그려서 스탑워치 카드에 가려지지 않음)
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.style.borderColor = info.line;
+    tag.style.display = 'none';
+    document.body.appendChild(tag);
+    const label = {
+      set visible(v) { tag.style.display = v ? 'block' : 'none'; },
+      get visible() { return tag.style.display !== 'none'; },
+    };
 
     root.position.z = laneZ(lane);
     scene.add(root);
     return { info, lane, root, body, head, shell, stalks, trail,
-             label, labelCanvas, labelTex, frozen: false,
+             label, tag, frozen: false,
              p: 0, phase: 0, base: 0, boost: 1, nextChange: 0 };
   }
 
   function setLabel(s, text) {
-    const c = s.labelCanvas, g = c.getContext('2d');
-    g.clearRect(0, 0, c.width, c.height);
-    g.fillStyle = 'rgba(255,255,255,0.95)';
-    g.strokeStyle = s.info.line;
-    g.lineWidth = 6;
-    g.beginPath();
-    g.roundRect ? g.roundRect(8, 8, 304, 78, 36) : g.rect(8, 8, 304, 78);
-    g.fill(); g.stroke();
-    g.beginPath();                       // 말풍선 꼬리
-    g.moveTo(130, 84); g.lineTo(160, 108); g.lineTo(184, 84);
-    g.closePath(); g.fillStyle = 'rgba(255,255,255,0.95)'; g.fill();
-    g.fillStyle = '#3b4a3a';
-    g.font = '44px Jua, "Malgun Gothic", sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(text, 160, 49);
-    s.labelTex.needsUpdate = true;
+    s.tag.textContent = text;
   }
 
   const snails = SNAILS.map(makeSnail);
@@ -437,8 +448,11 @@
   // 스탑워치의 '기다려'에서 호출: 아직 달리는 달팽이 하나를 골라 멈추고 시간을 띄움
   window.snailRace = {
     freezeRandom(text) {
-      const pool = snails.filter(s => !s.frozen);
-      if (!pool.length) return;
+      const free = snails.filter(s => !s.frozen);
+      if (!free.length) return;
+      // 가장 뒤처진(늦게 가는) 달팽이부터 멈춤. 위치가 같으면 그중 랜덤
+      const last = Math.min(...free.map(s => s.x));
+      const pool = free.filter(s => s.x - last < 0.01);
       const s = pool[Math.floor(Math.random() * pool.length)];
       s.frozen = true;
       setLabel(s, text);
@@ -496,15 +510,10 @@
     viewCx += (tv.cx - viewCx) * k;
     viewW += (tv.w - viewW) * k;
 
-    // 멀어질수록 달팽이와 말풍선을 키워서 계속 보이게
+    // 멀어질수록 달팽이를 키워서 계속 보이게
     const zoom = viewW / W_MIN;
     const r = Math.min(Math.sqrt(zoom), 1.8);          // 달팽이 크기
-    const L = Math.min(zoom, 6);                       // 말풍선 크기(월드 기준)
-    snails.forEach(s => {
-      s.root.scale.setScalar(r);
-      s.label.scale.set(7 * L / r, 2.45 * L / r, 1);
-      s.label.position.y = (4.5 * r + (L - 1) * 2) / r;
-    });
+    snails.forEach(s => { s.root.scale.setScalar(r); s.size = r; });
 
     // 구름은 카메라 영역 안에서 계속 흐르도록
     const range = Math.max(150, viewW * 3);
@@ -545,12 +554,27 @@
     sc.updateProjectionMatrix();
   }
 
+  // 멈춘 달팽이 머리 위 3D 좌표를 화면 좌표로 바꿔 말풍선을 놓음
+  const tagPos = new THREE.Vector3();
+  function placeTags() {
+    camera.updateMatrixWorld();
+    const w = window.innerWidth, h = window.innerHeight;
+    snails.forEach(s => {
+      if (!s.label.visible) return;
+      const r = s.size || 1;
+      tagPos.set(s.x + 1.9 * r, 4 * r + 0.4, laneZ(s.lane)).project(camera);
+      s.tag.style.left = ((tagPos.x * 0.5 + 0.5) * w) + 'px';
+      s.tag.style.top = ((-tagPos.y * 0.5 + 0.5) * h) + 'px';
+    });
+  }
+
   const clock = new THREE.Clock();
   function frame() {
     const dt = Math.min(0.25, clock.getDelta());
     time += dt;
     update(dt);
     placeCamera();
+    placeTags();
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }
